@@ -1,8 +1,15 @@
+using AccessoData;
 using AccessoData.Contexto;
+using AccessoData.InicializarDB;
+using ConsumoTelefonico.API;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using Negocio.Repositorio;
 using Negocio.Repositorio.IRepositorio;
+using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -39,11 +46,45 @@ builder.Services.AddSwaggerGen(c =>
 builder.Services.AddDbContext<AppDbContext>(opciones =>
     opciones.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+//Identity 
+builder.Services.AddIdentity<Usuario, IdentityRole>().AddDefaultTokenProviders()
+    .AddEntityFrameworkStores<AppDbContext>();
+
+//Configuracion JWT
+var seccionJwt = builder.Configuration.GetSection("ConfiguracionJWT");
+builder.Services.Configure<ConfiguracionJWT>(seccionJwt);
+
+//Autenticacion
+var configuracionJwt = seccionJwt.Get<ConfiguracionJWT>();
+var secreto = Encoding.ASCII.GetBytes(configuracionJwt.Secreto);
+
+builder.Services.AddAuthentication(opt =>
+{
+    opt.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    opt.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+}).AddJwtBearer(x =>
+{
+    x.RequireHttpsMetadata = false;
+    x.SaveToken = true;
+    x.TokenValidationParameters = new()
+    {
+        ValidateIssuerSigningKey = true,
+        IssuerSigningKey = new SymmetricSecurityKey(secreto),
+        ValidateIssuer = false,
+        ValidateAudience = false
+    };
+});
+
+
 //Automapper
 builder.Services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());
 
 //Repositorios
 builder.Services.AddScoped<ILlamadaRepositorio, LlamadaRepositorio>();
+builder.Services.AddScoped<IUsuarioRepositorio, UsuarioRepositorio>();
+
+builder.Services.AddScoped<IInicializadorDB, InicializadorDB>();
+
 
 var app = builder.Build();
 
@@ -51,10 +92,24 @@ var app = builder.Build();
 app.UseSwagger();
 app.UseSwaggerUI();
 
-// Configure the HTTP request pipeline.
+InicializarDB();
 
+
+// Configure the HTTP request pipeline.
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
 
 app.Run();
+
+
+
+void InicializarDB()
+{
+    using(var scorpe = app.Services.CreateScope())
+    {
+        var inicializador = scorpe.ServiceProvider.GetRequiredService<IInicializadorDB>();
+        inicializador.InicializarDB();
+    }
+}
